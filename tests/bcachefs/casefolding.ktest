@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+
+. $(dirname $(readlink -e "${BASH_SOURCE[0]}"))/bcachefs-test-libs.sh
+
+config-scratch-devs 1G
+config-scratch-devs 1G
+
+require-kernel-config CONFIG_UNICODE
+
+test_casefolding_simple()
+{
+    run_quiet "" bcachefs format -f --errors=panic ${ktest_scratch_dev[0]}
+    mount -t bcachefs ${ktest_scratch_dev[0]} /mnt
+
+    mkdir -p /mnt/non_cf
+    mkdir -p /mnt/cf
+    chattr +F /mnt/cf
+    mkdir -p /mnt/non_cf2
+
+    # Test basic casefolding
+    echo "test1" > /mnt/non_cf/BANANA
+    echo "test2" > /mnt/cf/BANANA
+    echo "test3" > /mnt/non_cf2/BANANA
+    cat /mnt/cf/banana
+    if cat /mnt/non_cf/banana ; then
+        echo "Was able to casefold in non-casefolding dir."
+        exit 1
+    fi
+    if cat /mnt/non_cf2/banana ; then
+        echo "Was able to casefold in non-casefolding dir."
+        exit 1
+    fi
+
+    echo "test4" > /mnt/non_cf/orange
+    echo "test5" > /mnt/cf/orange
+    echo "test6" > /mnt/non_cf2/orange
+    cat /mnt/cf/OrAnGE
+    if cat /mnt/non_cf/OrAnGE ; then
+        echo "Was able to casefold in non-casefolding dir."
+        exit 1
+    fi
+    if cat /mnt/non_cf2/OrAnGE ; then
+        echo "Was able to casefold in non-casefolding dir."
+        exit 1
+    fi
+
+    # Test copying doesn't persist hashes
+    mkdir -p /mnt/copy_test
+    cp /mnt/cf/orange /mnt/copy_test
+    cp /mnt/cf/BANANA /mnt/copy_test
+    cat /mnt/copy_test/orange
+    cat /mnt/copy_test/BANANA
+    if cat /mnt/copy_test/ORANGE ; then
+        echo "Was able to casefold after copy to non-cf dir"
+        exit 1
+    fi
+    if cat /mnt/copy_test/banana ; then
+        echo "Was able to casefold after copy to non-cf dir"
+        exit 1
+    fi
+
+    # Test moving doesn't persist hashes, etc
+    mkdir -p /mnt/rename_test
+    touch /mnt/rename_test/KIWI
+    echo "Kiwi" > /mnt/cf/kiwi
+    mv /mnt/cf/orange /mnt/rename_test
+    mv /mnt/cf/BANANA /mnt/rename_test
+    mv /mnt/cf/kiwi /mnt/rename_test/KIWI
+    cat /mnt/rename_test/orange
+    cat /mnt/rename_test/BANANA
+    cat /mnt/rename_test/KIWI
+    if cat /mnt/rename_test/ORANGE ; then
+        echo "Was able to casefold after move to non-cf dir"
+        exit 1
+    fi
+    if cat /mnt/rename_test/banana ; then
+        echo "Was able to casefold after move to non-cf dir"
+        exit 1
+    fi
+    if cat /mnt/rename_test/kiwi ; then
+        echo "Was able to casefold after move to non-cf dir"
+        exit 1
+    fi
+
+    # Test moving into a casefolding dir
+    echo "TOAD" > /mnt/toad
+    echo "frog" > /mnt/frog
+    mv /mnt/frog /mnt/cf/frog
+    cat /mnt/cf/FROG
+
+    touch /mnt/cf/TOAD
+    echo "toads" > /mnt/toads
+    mv /mnt/toad /mnt/cf/TOAD
+    mv /mnt/toads /mnt/cf/toads
+    cat /mnt/cf/toad
+    cat /mnt/cf/ToADS
+
+    # Test some non-ASCII characters
+    echo "greek" > /mnt/cf/greekἠἠἠἠaaaἠἠἠbἠ
+    echo "greek2" > /mnt/cf/aἈaἈaἈaἈaἈaἈa
+    echo "circle1" > /mnt/cf/ⓣⓣⓣⓣ
+    echo "circle2" > /mnt/cf/ⒺⒺⒺⒺⒺ
+    echo "cyrillic1" > /mnt/cf/уууу
+    echo "cyrillic2" > /mnt/cf/ППППП
+    echo "emoji" > /mnt/cf/🐸🐸✨✨🐸🐸
+    echo "japanese" > /mnt/cf/私はカエルです
+    echo "mixed1" > /mnt/cf/ἠB🐸ⓣ✨уⒺ✨蛙🐸ПaaL✨🐸
+    cat /mnt/cf/greekἨἨἨἨaaaἨἨἨbἨ
+    cat /mnt/cf/greekἨἠἠἨaaaἨἨἨbἠ
+    cat /mnt/cf/aἀaἀaἀaἀaἀaἀa
+    cat /mnt/cf/ⓉⓉⓉⓉ
+    cat /mnt/cf/ⓣⓉⓉⓣ
+    cat /mnt/cf/ⓉⓣⓣⓉ
+    cat /mnt/cf/ⓔⓔⓔⓔⓔ
+    cat /mnt/cf/УУУУ
+    cat /mnt/cf/УууУ
+    cat /mnt/cf/уУУу
+    cat /mnt/cf/ппппп
+    cat /mnt/cf/🐸🐸✨✨🐸🐸
+    cat /mnt/cf/私はカエルです
+    cat /mnt/cf/Ἠb🐸Ⓣ✨Уⓔ✨蛙🐸пAal✨🐸
+    cat /mnt/cf/ἠB🐸Ⓣ✨УⒺ✨蛙🐸ПaAL✨🐸
+    cat /mnt/cf/ἠb🐸Ⓣ✨уⒺ✨蛙🐸пaAL✨🐸
+
+    umount /mnt
+}
+
+test_casefolding_files()
+{
+    run_quiet "" bcachefs format -f --errors=panic ${ktest_scratch_dev[1]}
+    mount -t bcachefs ${ktest_scratch_dev[1]} /mnt
+
+    mkdir -p /mnt/cf_u
+    mkdir -p /mnt/cf_l
+    mkdir -p /mnt/cf_m
+    chattr +F /mnt/cf_u
+    chattr +F /mnt/cf_l
+    chattr +F /mnt/cf_m
+
+    # Make a set of uppercased files
+    for i in $(seq 1 512); do
+        echo -n A >> /mnt/temp_file_1
+       	echo "$i" > /mnt/cf_u/$(cat /mnt/temp_file_1)
+    done
+
+    # Make a set of lowercased files
+    for i in $(seq 1 512); do
+        echo -n a >> /mnt/temp_file_2
+       	echo "$i" > /mnt/cf_l/$(cat /mnt/temp_file_2)
+    done
+
+    # Make a set of mixed-case files
+    for i in $(seq 1 512); do
+        val=$([ "$i % 2" == 0 ] && echo "A" || echo "a")
+        echo -n $val >> /mnt/temp_file_3
+       	echo "$i" > /mnt/cf_m/$(cat /mnt/temp_file_3)
+    done
+
+    # Lookup an entirely lowercased version in the uppercase dir
+    for i in $(seq 1 512); do
+        echo -n a >> /mnt/temp_file_4
+        cat /mnt/cf_u/$(cat /mnt/temp_file_4)
+    done
+
+    # Lookup an entirely uppercased version in the uppercase dir
+    for i in $(seq 1 512); do
+        echo -n A >> /mnt/temp_file_5
+        cat /mnt/cf_u/$(cat /mnt/temp_file_5)
+    done
+
+    # Lookup an entirely uppercased version in the lowercase dir
+    for i in $(seq 1 512); do
+        echo -n A >> /mnt/temp_file_6
+        cat /mnt/cf_l/$(cat /mnt/temp_file_6)
+    done
+
+    # Lookup an entirely uppercased version in the mixed-case dir
+    for i in $(seq 1 512); do
+        echo -n A >> /mnt/temp_file_7
+        cat /mnt/cf_m/$(cat /mnt/temp_file_7)
+    done
+
+    # Lookup an entirely lowercased version in the mixed-case dir
+    for i in $(seq 1 512); do
+        echo -n a >> /mnt/temp_file_8
+        cat /mnt/cf_m/$(cat /mnt/temp_file_8)
+    done
+
+    umount /mnt
+}
+
+main "$@"
